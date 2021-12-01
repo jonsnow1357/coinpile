@@ -20,8 +20,10 @@ import logging.config
 #import six
 import argparse
 import configparser
-import web3
 import json
+import web3
+import web3.exceptions
+import unittest
 
 logging.config.fileConfig("logging.cfg")
 logger = logging.getLogger("app")
@@ -97,24 +99,78 @@ def _info():
       tmp = _bc.fromWei(_bc.eth.getBalance(acct.public_key), "ether")
       logger.info("acct {}: {} ETH".format(acct.public_key, tmp))
 
-def _test_token(name, addr):
-  logger.info("testing {}".format(name))
+def _test_token_mint_burn(name, addr):
   abi = json.load(open("contracts/{}/abi.json".format(name), "r"))
   token = Token(_bc.eth.contract(address=addr, abi=abi))
 
-  bal1 = 50 * (10**token.decimals)
-  bal2 = 100 * (10**token.decimals)
-  res = token.balanceOf(_appCfg.accounts[0].public_key)
-  if (res > bal1):
-    logger.info("token burning ...")
-    res = token.obj.functions.burn(res - bal1).transact()
+  logger.info("test mint/burn for {}".format(token.symbol))
+  #_bc.eth.defaultAccount = _bc.eth.accounts[0]
+  _bc.eth.defaultAccount = _appCfg.accounts[0].public_key
+
+  ref1 = 50 * (10**token.decimals)
+  ref2 = 100 * (10**token.decimals)
+
+  bal = token.balanceOf(_appCfg.accounts[0].public_key)
+  if (bal > ref1):
+    logger.info("burning ...")
+    res = token.obj.functions.burn(bal - ref1).transact()
     _bc.eth.waitForTransactionReceipt(res)
-  res = token.balanceOf(_appCfg.accounts[0].public_key)
-  if (res < bal2):
-    logger.info("token minting ...")
-    res = token.obj.functions.mint(_appCfg.accounts[0].public_key, (bal2 - res)).transact()
+  bal = token.balanceOf(_appCfg.accounts[0].public_key)
+  assert bal == ref1
+
+  if (bal < ref2):
+    logger.info("minting ...")
+    res = token.obj.functions.mint(_appCfg.accounts[0].public_key, (ref2 - bal)).transact()
     _bc.eth.waitForTransactionReceipt(res)
-  token.balanceOf(_appCfg.accounts[0].public_key)
+  bal = token.balanceOf(_appCfg.accounts[0].public_key)
+  assert bal == ref2
+
+def _test_token_transfer(name, addr):
+  abi = json.load(open("contracts/{}/abi.json".format(name), "r"))
+  token = Token(_bc.eth.contract(address=addr, abi=abi))
+
+  logger.info("test transfers for {}".format(token.symbol))
+  #_bc.eth.defaultAccount = _bc.eth.accounts[0]
+  _bc.eth.defaultAccount = _appCfg.accounts[0].public_key
+
+  bal0 = token.balanceOf(_appCfg.accounts[0].public_key)
+  ref0 = bal0
+  bal1 = token.balanceOf(_appCfg.accounts[1].public_key)
+  ref1 = bal1
+
+  if(bal0 > 0.0):
+    logger.info("transfer 0 -> 1 ...")
+    res = token.obj.functions.transfer(_appCfg.accounts[1].public_key, bal0).transact()
+    _bc.eth.waitForTransactionReceipt(res)
+
+  bal0 = token.balanceOf(_appCfg.accounts[0].public_key)
+  assert bal0 == ref1
+  bal1 = token.balanceOf(_appCfg.accounts[1].public_key)
+  assert bal1 == ref0
+
+  try:
+    res = token.obj.functions.transfer(_appCfg.accounts[1].public_key, 1).transact()
+    _bc.eth.waitForTransactionReceipt(res)
+    assert True
+  except web3.exceptions.ContractLogicError:
+    logger.info("transfer 0 -> 1 refused ...")
+
+  bal0 = token.balanceOf(_appCfg.accounts[0].public_key)
+  assert bal0 == ref1
+  bal1 = token.balanceOf(_appCfg.accounts[1].public_key)
+  assert bal1 == ref0
+
+  _bc.eth.defaultAccount = _appCfg.accounts[1].public_key
+  logger.info("transfer 1 -> 0 ...")
+  res = token.obj.functions.transfer(_appCfg.accounts[0].public_key, bal1).transact()
+  _bc.eth.waitForTransactionReceipt(res)
+
+  bal0 = token.balanceOf(_appCfg.accounts[0].public_key)
+  assert bal0 == ref0
+  bal1 = token.balanceOf(_appCfg.accounts[1].public_key)
+  assert bal1 == ref1
+
+  _bc.eth.defaultAccount = _appCfg.accounts[0].public_key
 
 def _test():
   if (_bc.eth.chainId != 1337):
@@ -122,12 +178,10 @@ def _test():
     return
 
   logger.info("running on ganache")
-  #_bc.eth.defaultAccount = _bc.eth.accounts[0]
-  _bc.eth.defaultAccount = _appCfg.accounts[0].public_key
-
   for k, v in _appCfg.tokens.items():
     if (v["address"] != ""):
-      _test_token(k, v["address"])
+      _test_token_mint_burn(k, v["address"])
+      _test_token_transfer(k, v["address"])
 
 def _deploy():
   if (_bc.eth.chainId != 1337):

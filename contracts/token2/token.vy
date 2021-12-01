@@ -59,10 +59,10 @@ def transfer(_to : address, _value : uint256) -> bool:
 @external
 def transferFrom(_from : address, _to : address, _value : uint256) -> bool:
     """
-     @dev Transfer tokens from one address to another.
-     @param _from address The address which you want to send tokens from
-     @param _to address The address which you want to transfer to
-     @param _value uint256 the amount of tokens to be transferred
+    @dev Transfer tokens from one address to another.
+    @param _from address The address which you want to send tokens from
+    @param _to address The address which you want to transfer to
+    @param _value uint256 the amount of tokens to be transferred
     """
     # NOTE: vyper does not allow underflows
     #       so the following subtraction would revert on insufficient balance
