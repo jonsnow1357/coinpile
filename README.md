@@ -9,35 +9,27 @@ For local testing please install [ganache](http://trufflesuite.com/docs/ganache/
 Config Files
 ============
 
-First you need to create **ganache.cfg**:
+    cp ganache_example.cfg ganache.cfg
 
-    [default]
-    url = http://127.0.0.1:7545
+Change *account_0* and *account_1* addresses according to your setup.
 
-    [account_0]
-    public = public_address_from_ganache_inteface
-    [account_1]
-    public = public_address_from_ganache_inteface
+    cp tokens_example.cfg tokens.cfg
 
-Then you will need to create/modify **tokens.cfg**
-
-    [token2] # sub-folder of ./contracts where the vyper files are located
-    address = address_on_blockchain_where_the_token_is_created
-    deploy = JSON_list_of_deploy_parameters
+Change *deploy* according to your wishes. These are the parameters for the token constructor.
 
 Quick Test
 ==========
 
     python3 web3_token.py -f ganache.cfg info
 
-This should print the last block number and the accounts and their ETH balance.
+This should print the last block number, the accounts and their ETH balance.
 
 Compile the Token
 =================
 
     cd contracts/token2
-    vyper -f abi > abi.json
-    vyper -f bytecode > bytecode.bin
+    vyper -f abi token.vy > abi.json
+    vyper -f bytecode token.vy > bytecode.bin
 
 Don't change the **abi.json** and **bytecode.bin** file names.
 They are used by the python script.
@@ -45,7 +37,7 @@ They are used by the python script.
 Deploy the Token
 ================
 
-    python3 web3_token.py -f ganache.cfg deploy
+    python3 web3_token.py -f ganache.cfg -c token2 deploy
     
 The script will print the address where the token is deployed. Copy this address and add it to your **tokens.cfg**
 

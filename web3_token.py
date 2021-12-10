@@ -19,74 +19,18 @@ import logging.config
 #import csv
 #import six
 import argparse
-import configparser
 import json
 import web3
 import web3.exceptions
-import unittest
 
 logging.config.fileConfig("logging.cfg")
 logger = logging.getLogger("app")
 
-class Account(object):
+import base
+import config
 
-  def __init__(self, public="", private=""):
-    self.public_key = public
-    self.private_key = private
-
-class AppConfig(object):
-
-  def __init__(self):
-    self.blockchain_url = ""
-    self.accounts = []
-    self.tokens = {}
-
-  def read(self, cfgPath, tokensPath):
-    if (not os.path.isfile(cfgPath)):
-      logger.error("file DOES NOT EXIST: {}".format(cliArgs["cfg"]))
-      sys.exit(1)
-
-    cfg_obj = configparser.ConfigParser()
-    cfg_obj.optionxform = str  # will be case sensitive
-    cfg_obj.read(cfgPath, encoding="utf-8")
-
-    self.blockchain_url = cfg_obj["default"]["url"]
-    for s in cfg_obj.sections():
-      if (s.startswith("account")):
-        acct = Account(cfg_obj[s]["public"])
-        self.accounts.append(acct)
-
-    if (not os.path.isfile(tokensPath)):
-      logger.error("file DOES NOT EXIST: {}".format(cliArgs["cfg"]))
-      sys.exit(1)
-
-    cfg_obj = configparser.ConfigParser()
-    cfg_obj.optionxform = str  # will be case sensitive
-    cfg_obj.read(tokensPath, encoding="utf-8")
-
-    for s in cfg_obj.sections():
-      if (s.startswith("token")):
-        tmp = {"address": "", "deploy": ""}
-        if ("address" in cfg_obj[s].keys()):
-          tmp["address"] = cfg_obj[s]["address"]
-        if ("deploy" in cfg_obj[s].keys()):
-          tmp["deploy"] = json.loads(cfg_obj[s]["deploy"])
-        self.tokens[s] = tmp
-
-_appCfg = AppConfig()
+_appCfg = config.AppConfig()
 _bc = None  # THE blockchain
-
-class Token(object):
-
-  def __init__(self, contract):
-    self.obj = contract
-    self.symbol = self.obj.functions.symbol().call()
-    self.decimals = int(self.obj.functions.decimals().call())
-
-  def balanceOf(self, acctAddr):
-    res = self.obj.functions.balanceOf(acctAddr).call()
-    logger.info("token balance: {} {}".format(res / (10**self.decimals), self.symbol))
-    return res
 
 def _info():
   logger.info("last block: {}".format(_bc.eth.blockNumber))
@@ -99,37 +43,49 @@ def _info():
       tmp = _bc.fromWei(_bc.eth.getBalance(acct.public_key), "ether")
       logger.info("acct {}: {} ETH".format(acct.public_key, tmp))
 
-def _test_token_mint_burn(name, addr):
-  abi = json.load(open("contracts/{}/abi.json".format(name), "r"))
-  token = Token(_bc.eth.contract(address=addr, abi=abi))
+def _test_token_mint_burn(tknName: str, tknDict: dict):
+  abi = json.load(open(os.path.join(tknDict["contract"], "abi.json"), "r"))
+  token = base.Token(_bc.eth.contract(address=tknDict["address"], abi=abi))
 
-  logger.info("test mint/burn for {}".format(token.symbol))
   #_bc.eth.defaultAccount = _bc.eth.accounts[0]
   _bc.eth.defaultAccount = _appCfg.accounts[0].public_key
 
-  ref1 = 50 * (10**token.decimals)
+  bal = token.balanceOf(_appCfg.accounts[0].public_key)
+  burn = False
+  if (bal > 0):
+    logger.info("burning ...")
+    burn = True
+    res = token.obj.functions.burn(bal).transact()
+    _bc.eth.waitForTransactionReceipt(res)
+  bal = token.balanceOf(_appCfg.accounts[0].public_key)
+  assert bal == 0
+
+  ref1 = 200 * (10**token.decimals)
   ref2 = 100 * (10**token.decimals)
 
-  bal = token.balanceOf(_appCfg.accounts[0].public_key)
-  if (bal > ref1):
-    logger.info("burning ...")
-    res = token.obj.functions.burn(bal - ref1).transact()
-    _bc.eth.waitForTransactionReceipt(res)
-  bal = token.balanceOf(_appCfg.accounts[0].public_key)
-  assert bal == ref1
-
-  if (bal < ref2):
+  if (burn):
     logger.info("minting ...")
-    res = token.obj.functions.mint(_appCfg.accounts[0].public_key, (ref2 - bal)).transact()
+    res = token.obj.functions.mint(_appCfg.accounts[0].public_key, (ref2)).transact()
     _bc.eth.waitForTransactionReceipt(res)
-  bal = token.balanceOf(_appCfg.accounts[0].public_key)
-  assert bal == ref2
+    bal = token.balanceOf(_appCfg.accounts[0].public_key)
+    assert bal == ref2
+  else:
+    logger.info("minting ...")
+    res = token.obj.functions.mint(_appCfg.accounts[0].public_key, (ref1)).transact()
+    _bc.eth.waitForTransactionReceipt(res)
+    bal = token.balanceOf(_appCfg.accounts[0].public_key)
+    assert bal == ref1
 
-def _test_token_transfer(name, addr):
-  abi = json.load(open("contracts/{}/abi.json".format(name), "r"))
-  token = Token(_bc.eth.contract(address=addr, abi=abi))
+    logger.info("burning ...")
+    res = token.obj.functions.burn(bal - ref2).transact()
+    _bc.eth.waitForTransactionReceipt(res)
+    bal = token.balanceOf(_appCfg.accounts[0].public_key)
+    assert bal == ref2
 
-  logger.info("test transfers for {}".format(token.symbol))
+def _test_token_transfer(tknName: str, tknDict: dict):
+  abi = json.load(open(os.path.join(tknDict["contract"], "abi.json"), "r"))
+  token = base.Token(_bc.eth.contract(address=tknDict["address"], abi=abi))
+
   #_bc.eth.defaultAccount = _bc.eth.accounts[0]
   _bc.eth.defaultAccount = _appCfg.accounts[0].public_key
 
@@ -137,16 +93,24 @@ def _test_token_transfer(name, addr):
   ref0 = bal0
   bal1 = token.balanceOf(_appCfg.accounts[1].public_key)
   ref1 = bal1
+  assert bal0 > 0
 
-  if(bal0 > 0.0):
-    logger.info("transfer 0 -> 1 ...")
-    res = token.obj.functions.transfer(_appCfg.accounts[1].public_key, bal0).transact()
+  try:
+    res = token.obj.functions.transfer(_appCfg.accounts[0].public_key,
+                                       (bal0 + 1)).transact()
     _bc.eth.waitForTransactionReceipt(res)
+    assert True
+  except web3.exceptions.ContractLogicError:
+    logger.info("transfer 0 -> 1 refused ...")
+
+  logger.info("transfer 0 -> 1 ...")
+  res = token.obj.functions.transfer(_appCfg.accounts[1].public_key, bal0).transact()
+  _bc.eth.waitForTransactionReceipt(res)
 
   bal0 = token.balanceOf(_appCfg.accounts[0].public_key)
-  assert bal0 == ref1
+  assert bal0 == 0
   bal1 = token.balanceOf(_appCfg.accounts[1].public_key)
-  assert bal1 == ref0
+  assert bal1 == ref0 + ref1
 
   try:
     res = token.obj.functions.transfer(_appCfg.accounts[1].public_key, 1).transact()
@@ -156,13 +120,13 @@ def _test_token_transfer(name, addr):
     logger.info("transfer 0 -> 1 refused ...")
 
   bal0 = token.balanceOf(_appCfg.accounts[0].public_key)
-  assert bal0 == ref1
+  assert bal0 == 0
   bal1 = token.balanceOf(_appCfg.accounts[1].public_key)
-  assert bal1 == ref0
+  assert bal1 == ref0 + ref1
 
   _bc.eth.defaultAccount = _appCfg.accounts[1].public_key
   logger.info("transfer 1 -> 0 ...")
-  res = token.obj.functions.transfer(_appCfg.accounts[0].public_key, bal1).transact()
+  res = token.obj.functions.transfer(_appCfg.accounts[0].public_key, ref0).transact()
   _bc.eth.waitForTransactionReceipt(res)
 
   bal0 = token.balanceOf(_appCfg.accounts[0].public_key)
@@ -180,8 +144,9 @@ def _test():
   logger.info("running on ganache")
   for k, v in _appCfg.tokens.items():
     if (v["address"] != ""):
-      _test_token_mint_burn(k, v["address"])
-      _test_token_transfer(k, v["address"])
+      logger.info(f"testing {k} @ {v['address']}")
+      _test_token_mint_burn(k, v)
+      _test_token_transfer(k, v)
 
 def _deploy():
   if (_bc.eth.chainId != 1337):
@@ -196,12 +161,18 @@ def _deploy():
     logger.info("nothing to deploy")
     return
 
-  if (cliArgs["contract"] not in _appCfg.tokens.keys()):
-    logger.info("contract not defined")
+  try:
+    cfg_token = _appCfg.tokens[cliArgs["contract"]]
+  except KeyError:
+    logger.error("token NOT defined")
     return
 
-  abi = json.load(open("contracts/{}/abi.json".format(cliArgs["contract"]), "r"))
-  bytecode = open("contracts/{}/bytecode.bin".format(cliArgs["contract"]),
+  if (cfg_token["address"] != ""):
+    logger.error("token already HAS address")
+    return
+
+  abi = json.load(open(os.path.join(cfg_token["contract"], "abi.json"), "r"))
+  bytecode = open(os.path.join(cfg_token["contract"], "bytecode.bin"),
                   "r").read().strip(" \r\n")
   if (bytecode.startswith("0x")):
     bytecode = bytecode[2:]
@@ -216,6 +187,9 @@ def mainApp():
   global _bc
 
   _appCfg.read(cliArgs["cfg"], "tokens.cfg")
+  if (cliArgs["list"]):
+    _appCfg.showInfo()
+    sys.exit(0)
   _bc = web3.Web3(web3.Web3.HTTPProvider(_appCfg.blockchain_url))
 
   if (cliArgs["action"] == "info"):
@@ -248,9 +222,12 @@ if (__name__ == "__main__"):
   parser = argparse.ArgumentParser(description=appDesc)
   parser.add_argument("action", help="action", choices=("info", "test", "deploy"))
   parser.add_argument("-f", "--cfg", default=appCfgPath, help="configuration file path")
-  parser.add_argument("-c", "--contract", default="", help="contract name")
-  #parser.add_argument("-l", "--list", action="store_true", default=False,
-  #                    help="list config file options")
+  parser.add_argument("-c", "--contract", default="", help="contract folder name")
+  parser.add_argument("-l",
+                      "--list",
+                      action="store_true",
+                      default=False,
+                      help="list config file options")
   #parser.add_argument("-x", "--extra",
   #                    choices=("", ""),
   #                    help="extra parameters")
